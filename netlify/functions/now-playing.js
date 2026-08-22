@@ -1,12 +1,16 @@
-// Proxies Spotify's "currently playing" endpoint so no credentials reach the browser.
+// Reports whatever Ishan is currently scrobbling, via Last.fm.
+//
+// Last.fm is used rather than Spotify directly because Spotify's Web API now
+// requires the *app owner* to hold a Premium subscription; Last.fm scrobbles
+// from a free Spotify account and has no such requirement.
 //
 // Required Netlify environment variables:
-//   SPOTIFY_CLIENT_ID
-//   SPOTIFY_CLIENT_SECRET
-//   SPOTIFY_REFRESH_TOKEN   (mint once with tools/spotify-refresh-token.mjs)
+//   LASTFM_API_KEY   from https://www.last.fm/api/account/create
+//   LASTFM_USER      the Last.fm username to read
+//
+// Append ?debug=1 for a non-secret report of which stage failed.
 
-const TOKEN_URL = 'https://accounts.spotify.com/api/token';
-const NOW_PLAYING_URL = 'https://api.spotify.com/v1/me/player/currently-playing';
+const API = 'https://ws.audioscrobbler.com/2.0/';
 
 function json(body, maxAge) {
   return {
@@ -19,46 +23,71 @@ function json(body, maxAge) {
   };
 }
 
-async function accessToken(id, secret, refresh) {
-  const res = await fetch(TOKEN_URL, {
-    method: 'POST',
-    headers: {
-      authorization: 'Basic ' + Buffer.from(id + ':' + secret).toString('base64'),
-      'content-type': 'application/x-www-form-urlencoded',
-    },
-    body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: refresh }),
-  });
-  if (!res.ok) throw new Error('token refresh failed: ' + res.status);
-  return (await res.json()).access_token;
+// Last.fm returns a bare object instead of an array when there is only one track.
+function firstTrack(data) {
+  const t = data && data.recenttracks && data.recenttracks.track;
+  if (!t) return null;
+  return Array.isArray(t) ? t[0] : t;
 }
 
-exports.handler = async function () {
-  const { SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET, SPOTIFY_REFRESH_TOKEN } = process.env;
-  if (!SPOTIFY_CLIENT_ID || !SPOTIFY_CLIENT_SECRET || !SPOTIFY_REFRESH_TOKEN) {
-    return json({ playing: false }, 300);
+exports.handler = async function (event) {
+  const debug = !!(event && event.queryStringParameters && event.queryStringParameters.debug);
+  const { LASTFM_API_KEY, LASTFM_USER } = process.env;
+
+  const report = (stage, detail, extra) =>
+    debug
+      ? json(Object.assign({ ok: false, stage, detail }, extra), 0)
+      : json({ playing: false }, stage === 'config' ? 300 : 30);
+
+  if (!LASTFM_API_KEY || !LASTFM_USER) {
+    return report('config', 'LASTFM_API_KEY and/or LASTFM_USER are not set', {
+      hasKey: !!LASTFM_API_KEY,
+      hasUser: !!LASTFM_USER,
+    });
   }
 
   try {
-    const token = await accessToken(SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET, SPOTIFY_REFRESH_TOKEN);
-    const res = await fetch(NOW_PLAYING_URL, { headers: { authorization: 'Bearer ' + token } });
+    const url =
+      API +
+      '?' +
+      new URLSearchParams({
+        method: 'user.getrecenttracks',
+        user: LASTFM_USER,
+        api_key: LASTFM_API_KEY,
+        format: 'json',
+        limit: '1',
+      });
 
-    // 204 = nothing playing. 202 shows up occasionally when the player is idle.
-    if (res.status === 204 || res.status === 202) return json({ playing: false }, 30);
-    if (!res.ok) return json({ playing: false }, 30);
+    const res = await fetch(url, { headers: { 'user-agent': 'ishankr.com now-playing' } });
+    const data = await res.json().catch(() => null);
 
-    const data = await res.json();
-    if (!data || !data.is_playing || !data.item || data.currently_playing_type !== 'track') {
-      return json({ playing: false }, 30);
+    // Last.fm signals errors in the body with HTTP 200, so check both.
+    if (!res.ok || (data && data.error)) {
+      return report('lastfm', 'api error', {
+        status: res.status,
+        code: data && data.error,
+        message: data && data.message,
+      });
     }
 
-    return json({
+    const track = firstTrack(data);
+    if (!track) return report('empty', 'no recent tracks for user ' + LASTFM_USER, { status: res.status });
+
+    const nowplaying = !!(track['@attr'] && track['@attr'].nowplaying === 'true');
+    if (!nowplaying) {
+      return report('idle', 'most recent track is not currently playing', {
+        lastPlayed: track.name,
+      });
+    }
+
+    const payload = {
       playing: true,
-      title: data.item.name,
-      artist: (data.item.artists || []).map((a) => a.name).join(', '),
-      url: data.item.external_urls && data.item.external_urls.spotify,
-    }, 30);
+      title: track.name,
+      artist: track.artist && (track.artist['#text'] || track.artist.name),
+      url: track.url,
+    };
+    return debug ? json(Object.assign({ ok: true, stage: 'playing' }, payload), 0) : json(payload, 30);
   } catch (err) {
-    // Never let a Spotify hiccup turn into a visible error on the page.
-    return json({ playing: false }, 30);
+    return report('fetch', String((err && err.message) || err));
   }
 };
