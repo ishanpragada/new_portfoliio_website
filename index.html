@@ -12,7 +12,7 @@
 
 <h1>Ishan Buyyanapragada</h1>
 
-<p>rapids @ nvidia &middot; cs @ uiuc</p>
+<p>incoming swe @ imc trading &middot; cs @ uiuc</p>
 
 <p>
 <a href="mailto:ibuyy@illinois.edu">email</a> &middot;
@@ -25,7 +25,9 @@
 <p>
 I'm an undergraduate studying computer science at the
 <a href="https://illinois.edu">University of Illinois Urbana-Champaign</a>.
-I work on <a href="https://rapids.ai/">RAPIDS</a> at <a href="https://www.nvidia.com/">NVIDIA</a>.
+I'll be joining <a href="https://www.imc.com/">IMC Trading</a> as a software engineering
+intern in June 2027. Previously <a href="https://rapids.ai/">RAPIDS</a> at
+<a href="https://www.nvidia.com/">NVIDIA</a>.
 </p>
 
 <p>
@@ -39,7 +41,12 @@ execution on Linux.
 
 <table>
 <tr>
-  <td>2026 &ndash;</td>
+  <td>2027</td>
+  <td>incoming software engineering intern, <a href="https://www.imc.com/">IMC Trading</a>
+    (summer 2027)</td>
+</tr>
+<tr>
+  <td>2026</td>
   <td>software engineer, <a href="https://rapids.ai/">RAPIDS</a> @ <a href="https://www.nvidia.com/">NVIDIA</a></td>
 </tr>
 <tr>
@@ -106,7 +113,45 @@ the YouTube API.</dd>
 
 <hr>
 
+<p id="now-playing" hidden>now playing: <span id="now-playing-track"></span></p>
+
 <p><a href="mailto:ibuyy@illinois.edu">ibuyy@illinois.edu</a></p>
+
+<script>
+// Fills in the "now playing" line from a Netlify function that proxies Spotify.
+// If the function is unreachable or nothing is playing, the line stays hidden.
+(function () {
+  var line = document.getElementById('now-playing');
+  var slot = document.getElementById('now-playing-track');
+
+  function render(data) {
+    if (!data || !data.playing || !data.title) {
+      line.hidden = true;
+      return;
+    }
+    var label = data.title + (data.artist ? ' \u2014 ' + data.artist : '');
+    if (data.url) {
+      var a = document.createElement('a');
+      a.href = data.url;
+      a.textContent = label;
+      slot.replaceChildren(a);
+    } else {
+      slot.textContent = label;
+    }
+    line.hidden = false;
+  }
+
+  function poll() {
+    fetch('/.netlify/functions/now-playing', { cache: 'no-store' })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(render)
+      .catch(function () { line.hidden = true; });
+  }
+
+  poll();
+  setInterval(poll, 30000);
+})();
+</script>
 
 </body>
 </html>
