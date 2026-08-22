@@ -1,9 +1,8 @@
 // Minimal local preview: serves the site and runs the now-playing function in-process,
 // so the page can be checked without installing the Netlify CLI.
 //
-//   node tools/dev-server.mjs            → function returns { playing: false }
-//   SPOTIFY_CLIENT_ID=... SPOTIFY_CLIENT_SECRET=... SPOTIFY_REFRESH_TOKEN=... \
-//     node tools/dev-server.mjs          → hits Spotify for real
+//   node tools/dev-server.mjs                          → function returns { playing: false }
+//   LASTFM_API_KEY=... LASTFM_USER=... node tools/dev-server.mjs  → hits Last.fm for real
 
 import http from 'node:http';
 import { readFile } from 'node:fs/promises';
@@ -21,7 +20,9 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
 
   if (url.pathname === '/.netlify/functions/now-playing') {
-    const result = await handler();
+    const result = await handler({
+      queryStringParameters: Object.fromEntries(url.searchParams),
+    });
     res.writeHead(result.statusCode, result.headers).end(result.body);
     return;
   }
